@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: asn-project
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app.py
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
