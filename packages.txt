@@ -1,12 +1,8 @@
-poppler-utils
-tesseract-ocr
-libtesseract-dev
-libarchive-dev
-libgl1
-python3-opencv
 libgl1-mesa-glx
 libglib2.0-0
 libsm6
 libxrender1
 libxext6
 libgomp1
+libxml2-dev
+libxslt1-dev

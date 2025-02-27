@@ -50,6 +50,16 @@ groq_api_key = os.getenv("GROQ_API_KEY")
 groq_client = Groq(api_key=groq_api_key)
 print(os.environ['PATH']) 
 
+PADDLE_AVAILABLE = False
+
+# Try to import PaddleOCR but don't fail if it's not available
+try:
+    from paddleocr import PaddleOCR
+    PADDLE_AVAILABLE = True
+    print("PaddleOCR successfully imported")
+except Exception as e:
+    print(f"PaddleOCR import error: {e}")
+
 def admin_tracking_tab():
     """Display user tracking data for admin"""
     try:
@@ -936,28 +946,24 @@ def download_stored_file(file_path):
 #     return None
 
 def init_ocr():
-    """Initialize PaddleOCR with minimal settings for Streamlit Cloud"""
+    """Initialize OCR with fallback options"""
+    if not PADDLE_AVAILABLE:
+        st.warning("PaddleOCR is not available. Using fallback text extraction only.")
+        return None
+        
     try:
-        # Debug statement
-        st.write("Attempting to initialize PaddleOCR")
-        
-        from paddleocr import PaddleOCR
-        
-        # Use absolute minimal settings
+        # Initialize with minimal settings for cloud
         ocr = PaddleOCR(
             use_angle_cls=False,
             lang='en',
             use_gpu=False,
             show_log=False,
             use_mp=False,
-            enable_mkldnn=False  # Disable this as it might cause issues on some platforms
+            enable_mkldnn=False
         )
-        
-        st.write("PaddleOCR initialized successfully")
         return ocr
     except Exception as e:
         st.error(f"Error initializing OCR: {str(e)}")
-        # Print more details about the error
         import traceback
         st.code(traceback.format_exc())
         return None
@@ -1727,14 +1733,19 @@ def count_processed_rows(invoice_info):
 #     st.info("We are working on it now")
 #     return None
 def extract_text_from_scanned_pdf(pdf_path):
-    PADDLE_AVAILABLE = False
-    try:
-        from paddleocr import PaddleOCR
-    
-        PADDLE_AVAILABLE = True
-    except ImportError:
-        if not PADDLE_AVAILABLE:
-            st.error("PaddleOCR is not available. Cannot process scanned PDFs.")
+    """Extract text with fallback if OCR not available"""
+    if not PADDLE_AVAILABLE:
+        st.warning("Cannot process scanned PDF - OCR not available")
+        st.info("Using basic text extraction as fallback...")
+        # Fallback to basic text extraction
+        try:
+            with fitz.open(pdf_path) as pdf:
+                text = ""
+                for page in pdf:
+                    text += page.get_text()
+                return text
+        except Exception as e:
+            st.error(f"Error in fallback text extraction: {str(e)}")
             return None
     try:
         # Initialize OCR with optimized settings
