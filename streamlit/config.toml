@@ -1,0 +1,28 @@
+[server]
+maxUploadSize = 200
+memory.ttl = 3600
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+primaryColor = "#F63366"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F2F6"
+textColor = "#262730"
+font = "sans serif"
+
+[deprecation]
+showPyplotGlobalUse = false
+
+[logger]
+level = "warning"
+
+[client]
+showErrorDetails = true
+toolbarMode = "minimal"
+
+# Memory optimization settings
+[memory]
+# Set a memory target to avoid OOM errors
+memoryTarget = 0.7  # Target 70% of available memory

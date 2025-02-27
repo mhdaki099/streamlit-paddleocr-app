@@ -1,0 +1,6 @@
+poppler-utils
+tesseract-ocr
+libtesseract-dev
+libarchive-dev
+libgl1
+python3-opencv
