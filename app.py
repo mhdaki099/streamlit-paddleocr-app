@@ -25,6 +25,9 @@ import streamlit.components.v1 as components
 import gc
 # from paddleocr import PaddleOCR
 import fitz
+import sys
+import platform
+import os
 
 
 warnings.filterwarnings('ignore', category=RuntimeWarning)
@@ -933,23 +936,30 @@ def download_stored_file(file_path):
 #     return None
 
 def init_ocr():
-    """Initialize PaddleOCR with optimized settings for Streamlit Cloud"""
+    """Initialize PaddleOCR with minimal settings for Streamlit Cloud"""
     try:
+        # Debug statement
+        st.write("Attempting to initialize PaddleOCR")
+        
         from paddleocr import PaddleOCR
-        # Initialize with lightweight settings to conserve resources
+        
+        # Use absolute minimal settings
         ocr = PaddleOCR(
-            use_angle_cls=False,  # Disable angle detection to save memory
-            lang='en',            # English language only
-            use_gpu=False,        # CPU mode for cloud deployment
-            show_log=False,       # Disable logs to reduce output
-            use_mp=False,         # Disable multiprocessing to save memory
-            enable_mkldnn=True,   # Enable Intel MKL-DNN optimizations if available
-            det_model_dir="./inference/det",  # Use local model directory if available
-            rec_model_dir="./inference/rec"   # Use local model directory if available
+            use_angle_cls=False,
+            lang='en',
+            use_gpu=False,
+            show_log=False,
+            use_mp=False,
+            enable_mkldnn=False  # Disable this as it might cause issues on some platforms
         )
+        
+        st.write("PaddleOCR initialized successfully")
         return ocr
     except Exception as e:
         st.error(f"Error initializing OCR: {str(e)}")
+        # Print more details about the error
+        import traceback
+        st.code(traceback.format_exc())
         return None
   
 # def init_ocr():
@@ -1717,7 +1727,15 @@ def count_processed_rows(invoice_info):
 #     st.info("We are working on it now")
 #     return None
 def extract_text_from_scanned_pdf(pdf_path):
-    """Extract text from scanned PDF using PaddleOCR with memory optimization"""
+    PADDLE_AVAILABLE = False
+    try:
+        from paddleocr import PaddleOCR
+    
+        PADDLE_AVAILABLE = True
+    except ImportError:
+        if not PADDLE_AVAILABLE:
+            st.error("PaddleOCR is not available. Cannot process scanned PDFs.")
+            return None
     try:
         # Initialize OCR with optimized settings
         ocr = init_ocr()
