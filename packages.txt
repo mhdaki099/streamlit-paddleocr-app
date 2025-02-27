@@ -6,3 +6,6 @@ libxext6
 libgomp1
 libxml2-dev
 libxslt1-dev
+tesseract-ocr
+libtesseract-dev
+poppler-utils

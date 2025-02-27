@@ -9,10 +9,15 @@ openpyxl>=3.1.2
 groq>=0.4.0
 
 # PaddleOCR - updated versions that are available
-paddlepaddle==2.6.0
-paddleocr==2.6.1.3
-Pillow==9.5.0
-opencv-python-headless==4.8.0.74
+paddleocr
+paddlepaddle
+opencv-python-headless
+shapely
+pyclipper
+scikit-image
+imgaug
+lmdb
+tqdm74
 
 # Add specific dependencies for PaddleOCR
 pyclipper>=1.2.1
