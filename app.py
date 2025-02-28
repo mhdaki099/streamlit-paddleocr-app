@@ -25,6 +25,7 @@ import streamlit.components.v1 as components
 import gc
 # from paddleocr import PaddleOCR
 import fitz
+import groq
 
 
 warnings.filterwarnings('ignore', category=RuntimeWarning)
