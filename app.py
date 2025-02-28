@@ -324,23 +324,20 @@ def extract_text_from_scanned_pdf(pdf_path):
         
 # 6. Update is_scanned_pdf function to show dynamic OCR engine message
 def is_scanned_pdf(pdf_path):
-    """Check if PDF is scanned by attempting to extract text"""
+    """Check if PDF is scanned by attempting to extract text using available libraries"""
     try:
-        with fitz.open(pdf_path) as pdf:
-            text_content = ""
-            for page in pdf:
-                text_content += page.get_text() or ""
-
-            if len(text_content.strip()) < 100:
-                # Check if running on Streamlit Cloud
-                is_streamlit_cloud = os.environ.get("STREAMLIT_SHARING_MODE") == "streamlit"
-                
-                if is_streamlit_cloud:
-                    st.info("Detected a scanned PDF. Initializing OCR processing with EasyOCR (PaddleOCR disabled on Streamlit Cloud)...")
-                else:
-                    st.info("Detected a scanned PDF. Will attempt OCR processing with PaddleOCR, EasyOCR, or Keras-OCR...")
-                return True
-            return False
+        text = extract_text_pdf(pdf_path)
+        
+        # If the extracted text is very small, it's likely a scanned PDF
+        if len(text.strip()) < 100:
+            # Check available OCR engines
+            ocr_engine = "available OCR engine"
+            if st.session_state.get('easyocr_available', False):
+                ocr_engine = "EasyOCR"
+            
+            st.info(f"Detected a scanned PDF. Processing with {ocr_engine}...")
+            return True
+        return False
     except Exception as e:
         st.error(f"Error checking PDF type: {str(e)}")
         return True
@@ -1899,23 +1896,39 @@ def login_page():
 
 
 def extract_text_pdf(pdf_path):
-    """Extract text from PDF, handling both scanned and machine-readable PDFs"""
-    if is_scanned_pdf(pdf_path):
-        with st.spinner("Processing scanned PDF with OCR..."):
-            return extract_text_from_scanned_pdf(pdf_path)
-    else:
-        try:
-            with fitz.open(pdf_path) as pdf:
-                unique_pages = {}
-                for page_num, page in enumerate(pdf):
-                    page_text = page.get_text()
-                    content_hash = hash(page_text)
-                    if content_hash not in unique_pages:
-                        unique_pages[content_hash] = page_text
-                return "\n".join(unique_pages.values())
-        except Exception as e:
-            st.error(f"Error extracting text: {str(e)}")
-            return None
+    """Extract text from machine-readable PDF using available libraries"""
+    try:
+        # First try using pdfplumber (usually works well for most PDFs)
+        import pdfplumber
+        
+        with pdfplumber.open(pdf_path) as pdf:
+            text = ""
+            for page in pdf.pages:
+                text += page.extract_text() or ""
+            
+            # If we got substantial text, return it
+            if len(text.strip()) > 100:
+                return text
+        
+        # If pdfplumber didn't get enough text, try PyPDF2
+        import PyPDF2
+        
+        with open(pdf_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            text = ""
+            for page in pdf_reader.pages:
+                text += page.extract_text() or ""
+            
+            # Check if we got substantial text
+            if len(text.strip()) > 100:
+                return text
+        
+        # If we got here, this is likely a scanned PDF without machine-readable text
+        return ""
+        
+    except Exception as e:
+        st.error(f"Error extracting text from PDF: {str(e)}")
+        return ""
             
 
 def format_markdown_table(headers, data):
