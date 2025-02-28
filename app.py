@@ -25,7 +25,7 @@ import streamlit.components.v1 as components
 import gc
 # from paddleocr import PaddleOCR
 import fitz
-from rapidocr_onnxruntime import RapidOCR  # Add RapidOCR import
+from rapidocr_onnxruntime import RapidOCR_ONNXRuntime  # Add RapidOCR import
 import cv2  # Required for image processing
 
 
@@ -1224,7 +1224,6 @@ def is_scanned_pdf(pdf_path):
     except Exception as e:
         st.error(f"Error checking PDF type: {str(e)}")
         return True
-
 # def process_invoice_lines(invoice_info, costing_number=""):
 #     """
 #     Process invoice information lines while properly handling separators
@@ -1487,11 +1486,13 @@ def count_processed_rows(invoice_info):
     except Exception as e:
         st.error(f"Error counting processed rows: {str(e)}")
         return 0
+
+
 def extract_text_from_scanned_pdf(pdf_path):
     """Extract text from scanned PDF using RapidOCR"""
     try:
         # Initialize RapidOCR
-        rapid_ocr = RapidOCR()
+        rapid_ocr = RapidOCR_ONNXRuntime()
         
         # Open PDF with PyMuPDF
         pdf_document = fitz.open(pdf_path)
@@ -1559,6 +1560,7 @@ def extract_text_from_scanned_pdf(pdf_path):
     except Exception as e:
         st.error(f"OCR processing error: {str(e)}")
         return None
+
 
 # def extract_text_from_scanned_pdf(pdf_path):
 #     """Extract text from scanned PDF using both OCR methods"""
@@ -1769,7 +1771,24 @@ def login_page():
             st.success("Login successful!")
             st.rerun()
 
-
+def extract_text_pdf(pdf_path):
+    """Extract text from PDF, handling both scanned and machine-readable PDFs"""
+    if is_scanned_pdf(pdf_path):
+        return extract_text_from_scanned_pdf(pdf_path)
+    else:
+        st.info("Detected machine-readable PDF. Using direct text extraction...")
+        try:
+            with fitz.open(pdf_path) as pdf:
+                unique_pages = {}
+                for page_num, page in enumerate(pdf):
+                    page_text = page.get_text()
+                    content_hash = hash(page_text)
+                    if content_hash not in unique_pages:
+                        unique_pages[content_hash] = page_text
+                return "\n".join(unique_pages.values())
+        except Exception as e:
+            st.error(f"Error extracting text: {str(e)}")
+            return None
 # def extract_text_pdf(pdf_path):
 #     """Extract text from PDF, handling both scanned and machine-readable PDFs"""
 #     if is_scanned_pdf(pdf_path):
@@ -1790,24 +1809,6 @@ def login_page():
 #             st.error(f"Error extracting text: {str(e)}")
 #             return None
 
-def extract_text_pdf(pdf_path):
-    """Extract text from PDF, handling both scanned and machine-readable PDFs"""
-    if is_scanned_pdf(pdf_path):
-        return extract_text_from_scanned_pdf(pdf_path)
-    else:
-        st.info("Detected machine-readable PDF. Using direct text extraction...")
-        try:
-            with fitz.open(pdf_path) as pdf:
-                unique_pages = {}
-                for page_num, page in enumerate(pdf):
-                    page_text = page.get_text()
-                    content_hash = hash(page_text)
-                    if content_hash not in unique_pages:
-                        unique_pages[content_hash] = page_text
-                return "\n".join(unique_pages.values())
-        except Exception as e:
-            st.error(f"Error extracting text: {str(e)}")
-            return None      
 
 def format_markdown_table(headers, data):
     """
