@@ -25,8 +25,6 @@ import streamlit.components.v1 as components
 import gc
 # from paddleocr import PaddleOCR
 import fitz
-from rapidocr_onnxruntime import RapidOCR_ONNXRuntime  # Add RapidOCR import
-import cv2  # Required for image processing
 
 
 warnings.filterwarnings('ignore', category=RuntimeWarning)
@@ -48,6 +46,15 @@ load_dotenv()
 groq_api_key = os.getenv("GROQ_API_KEY")
 groq_client = Groq(api_key=groq_api_key)
 print(os.environ['PATH']) 
+
+def init_easyocr():
+    """Initialize EasyOCR with English language support"""
+    try:
+        reader = easyocr.Reader(['en'], gpu=False)
+        return reader
+    except Exception as e:
+        st.error(f"Error initializing EasyOCR: {str(e)}")
+        return None
 
 def admin_tracking_tab():
     """Display user tracking data for admin"""
@@ -1209,21 +1216,18 @@ def is_scanned_pdf(pdf_path):
     try:
         with fitz.open(pdf_path) as pdf:
             text_content = ""
-            # Check only first few pages for efficiency
-            max_pages_to_check = min(3, len(pdf))
-            
-            for page_num in range(max_pages_to_check):
-                page = pdf[page_num]
+            for page in pdf:
                 text_content += page.get_text() or ""
 
-            # If very little text content, consider it a scanned PDF
             if len(text_content.strip()) < 100:
-                st.info("Detected scanned PDF. Using RapidOCR for text extraction...")
+                st.info("Detected scanned PDF. Using OCR for text extraction...")
                 return True
             return False
     except Exception as e:
         st.error(f"Error checking PDF type: {str(e)}")
         return True
+
+
 # def process_invoice_lines(invoice_info, costing_number=""):
 #     """
 #     Process invoice information lines while properly handling separators
@@ -1487,81 +1491,6 @@ def count_processed_rows(invoice_info):
         st.error(f"Error counting processed rows: {str(e)}")
         return 0
 
-
-def extract_text_from_scanned_pdf(pdf_path):
-    """Extract text from scanned PDF using RapidOCR"""
-    try:
-        # Initialize RapidOCR
-        rapid_ocr = RapidOCR_ONNXRuntime()
-        
-        # Open PDF with PyMuPDF
-        pdf_document = fitz.open(pdf_path)
-        all_results = []
-        total_pages = len(pdf_document)
-        
-        # Process each page with progress bar
-        progress_bar = st.progress(0)
-        
-        for page_num in range(total_pages):
-            try:
-                # Get page and convert to image
-                page = pdf_document[page_num]
-                pix = page.get_pixmap(alpha=False)  # Disable alpha channel
-                
-                # Convert to OpenCV format (numpy array)
-                img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
-                    pix.height, pix.width, 3 if pix.n >= 3 else 1
-                )
-                
-                # Ensure 3 channels for OCR
-                if img_array.shape[-1] == 1:
-                    img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2RGB)
-                
-                # Run OCR with error handling
-                try:
-                    result, _ = rapid_ocr(img_array)
-                    
-                    if result:
-                        page_text = []
-                        for line in result:
-                            # RapidOCR returns [box, text, confidence]
-                            # We only need the text component (index 1)
-                            text = line[1]
-                            page_text.append(text)
-                        
-                        all_results.extend(page_text)
-                
-                except Exception as ocr_error:
-                    st.warning(f"Error in OCR processing for page {page_num + 1}: {str(ocr_error)}")
-                    continue
-                
-                # Update progress
-                progress_bar.progress((page_num + 1) / total_pages)
-                
-            except Exception as page_error:
-                st.error(f"Error processing page {page_num + 1}: {str(page_error)}")
-                continue
-            
-            finally:
-                # Clear memory after each page
-                gc.collect()
-        
-        # Close PDF and clean up
-        pdf_document.close()
-        progress_bar.empty()
-        
-        if all_results:
-            st.success("Successfully extracted text using RapidOCR")
-            return "\n".join(all_results)
-        else:
-            st.error("No text was extracted from the PDF")
-            return None
-                
-    except Exception as e:
-        st.error(f"OCR processing error: {str(e)}")
-        return None
-
-
 # def extract_text_from_scanned_pdf(pdf_path):
 #     """Extract text from scanned PDF using both OCR methods"""
 #     try:
@@ -1670,6 +1599,74 @@ def extract_text_from_scanned_pdf(pdf_path):
 #         st.error(f"OCR processing error: {str(e)}")
 #         return None
 
+def extract_text_from_scanned_pdf(pdf_path):
+    """Extract text from scanned PDF using EasyOCR"""
+    try:
+        # Initialize EasyOCR
+        reader = init_easyocr()
+        if not reader:
+            st.error("Failed to initialize EasyOCR")
+            return None
+            
+        # Open PDF with PyMuPDF
+        pdf_document = fitz.open(pdf_path)
+        all_text = []
+        total_pages = len(pdf_document)
+        
+        # Process each page with progress bar
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        for page_num in range(total_pages):
+            try:
+                status_text.text(f"Processing page {page_num + 1} of {total_pages}...")
+                
+                # Get page and convert to image
+                page = pdf_document[page_num]
+                pix = page.get_pixmap(alpha=False)
+                
+                # Convert to PIL Image
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                
+                # Perform OCR with EasyOCR
+                results = reader.readtext(np.array(img))
+                
+                # Extract text from results
+                page_text = []
+                for detection in results:
+                    text = detection[1]  # EasyOCR returns [bbox, text, confidence]
+                    page_text.append(text)
+                
+                # Add page text to overall results
+                all_text.append(" ".join(page_text))
+                
+                # Update progress
+                progress_bar.progress((page_num + 1) / total_pages)
+                
+            except Exception as e:
+                st.warning(f"Error processing page {page_num + 1}: {str(e)}")
+                continue
+            
+            finally:
+                # Clear memory after each page
+                gc.collect()
+        
+        # Close PDF document
+        pdf_document.close()
+        progress_bar.empty()
+        status_text.empty()
+        
+        if all_text:
+            return "\n\n".join(all_text)
+        else:
+            st.error("No text was extracted from the PDF")
+            return None
+            
+    except Exception as e:
+        st.error(f"OCR processing error: {str(e)}")
+        st.error(traceback.format_exc())
+        return None
+
 
 def check_shared_file():
     """Handle shared file viewing and downloading"""
@@ -1771,24 +1768,7 @@ def login_page():
             st.success("Login successful!")
             st.rerun()
 
-def extract_text_pdf(pdf_path):
-    """Extract text from PDF, handling both scanned and machine-readable PDFs"""
-    if is_scanned_pdf(pdf_path):
-        return extract_text_from_scanned_pdf(pdf_path)
-    else:
-        st.info("Detected machine-readable PDF. Using direct text extraction...")
-        try:
-            with fitz.open(pdf_path) as pdf:
-                unique_pages = {}
-                for page_num, page in enumerate(pdf):
-                    page_text = page.get_text()
-                    content_hash = hash(page_text)
-                    if content_hash not in unique_pages:
-                        unique_pages[content_hash] = page_text
-                return "\n".join(unique_pages.values())
-        except Exception as e:
-            st.error(f"Error extracting text: {str(e)}")
-            return None
+
 # def extract_text_pdf(pdf_path):
 #     """Extract text from PDF, handling both scanned and machine-readable PDFs"""
 #     if is_scanned_pdf(pdf_path):
@@ -1809,6 +1789,24 @@ def extract_text_pdf(pdf_path):
 #             st.error(f"Error extracting text: {str(e)}")
 #             return None
 
+def extract_text_pdf(pdf_path):
+    """Extract text from PDF, handling both scanned and machine-readable PDFs"""
+    if is_scanned_pdf(pdf_path):
+        return extract_text_from_scanned_pdf(pdf_path)
+    else:
+        st.info("Detected machine-readable PDF. Using direct text extraction...")
+        try:
+            with fitz.open(pdf_path) as pdf:
+                unique_pages = {}
+                for page_num, page in enumerate(pdf):
+                    page_text = page.get_text()
+                    content_hash = hash(page_text)
+                    if content_hash not in unique_pages:
+                        unique_pages[content_hash] = page_text
+                return "\n".join(unique_pages.values())
+        except Exception as e:
+            st.error(f"Error extracting text: {str(e)}")
+            return None         
 
 def format_markdown_table(headers, data):
     """
