@@ -1,29 +1,28 @@
-# Core requirements
+# requirements.txt - Update this file
+
+# Core dependencies
 streamlit>=1.24.0
 pandas>=1.5.3
 numpy>=1.24.3
-PyMuPDF<1.21.0  # Downgraded to be compatible with PaddleOCR
+PyMuPDF<1.21.0
 pdfplumber>=0.9.0
 python-dotenv>=1.0.0
 openpyxl>=3.1.2
 groq>=0.4.0
 
-# PaddleOCR - updated versions that are available
-paddleocr
-paddlepaddle
+# OCR dependencies - modified for Streamlit Cloud compatibility
+easyocr>=1.7.0
+# Note: paddleocr and paddlepaddle are commented out due to compatibility issues
+# paddleocr
+# paddlepaddle
 opencv-python-headless
 shapely
 pyclipper
 scikit-image
 imgaug
 lmdb
-tqdm74
+tqdm>=4.65.0  # Changed from tqdm74 which doesn't exist
 
-# Add specific dependencies for PaddleOCR
-pyclipper>=1.2.1
-shapely>=1.7.1
-scikit-image>=0.19.0
-imgaug>=0.4.0
-rapidfuzz>=1.9.1
-boto3
-python-dotenv
+# Additional dependencies
+tensorflow>=2.10.0
+importlib-metadata>=6.0.0
