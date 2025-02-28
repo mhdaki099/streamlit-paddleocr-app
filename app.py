@@ -20,7 +20,14 @@ import os
 from datetime import datetime, timedelta
 import streamlit.components.v1 as components
 import gc
-import fitz
+# Replace this line:
+
+# With these imports:
+import PyPDF2
+import pdfplumber
+import cv2  # This comes from opencv-python-headless
+import io
+from PIL import Image  # This c
 import subprocess
 import sys
 # OCR engines
