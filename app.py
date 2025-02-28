@@ -153,171 +153,71 @@ def init_keras_ocr():
         return None
 
 def extract_text_from_scanned_pdf(pdf_path):
-    """Extract text from scanned PDF using available OCR engines"""
+    """Extract text from scanned PDF using EasyOCR"""
     try:
-        # Determine which OCR engines to use based on availability
-        use_paddle = st.session_state.get('paddle_available', False)
-        use_easyocr = st.session_state.get('easyocr_available', False)
-        use_keras = st.session_state.get('keras_ocr_available', False)
+        # Initialize EasyOCR
+        import easyocr
+        reader = easyocr.Reader(['en'], gpu=False)
         
-        if not use_easyocr and not use_paddle and not use_keras:
-            st.error("No OCR engines available. Please install at least one of: EasyOCR, PaddleOCR, or Keras-OCR.")
-            return None
-
-        # Initialize variables
-        paddle_ocr = None
-        easyocr_reader = None
-        keras_pipeline = None
-        
-        # Open PDF with PyMuPDF
-        pdf_document = fitz.open(pdf_path)
+        # Get PDF images using PyPDF2 and PIL
         all_results = []
-        total_pages = len(pdf_document)
-        
-        # Process each page with progress bar
-        progress_bar = st.progress(0)
-        
-        # Set lower DPI for images to reduce memory usage
-        resolution = 150  # Lower resolution = less memory but might affect accuracy
-        
-        try:
-            # Initialize OCR engines
-            if use_paddle:
-                # Only try to import PaddleOCR if we're not on Streamlit Cloud
-                if not is_streamlit_cloud():
+        with open(pdf_path, 'rb') as pdf_file:
+            pdf_reader = PyPDF2.PdfReader(pdf_file)
+            total_pages = len(pdf_reader.pages)
+            
+            # Process each page with progress bar
+            progress_bar = st.progress(0)
+            
+            for page_num, page in enumerate(pdf_reader.pages):
+                try:
+                    # Try to extract page as an image
+                    if '/XObject' in page['/Resources']:
+                        xobjects = page['/Resources']['/XObject']
+                        
+                        # Check if we can extract image data
+                        for obj in xobjects:
+                            if xobjects[obj]['/Subtype'] == '/Image':
+                                try:
+                                    data = xobjects[obj]._data
+                                    img = Image.open(io.BytesIO(data))
+                                    # Convert to numpy array for OCR
+                                    img_array = np.array(img)
+                                    
+                                    # Process with EasyOCR
+                                    results = reader.readtext(img_array)
+                                    page_text = [result[1] for result in results]
+                                    all_results.extend(page_text)
+                                    continue
+                                except:
+                                    pass
+                    
+                    # If direct image extraction fails, render page to image
                     try:
-                        from paddleocr import PaddleOCR
-                        paddle_ocr = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False, show_log=False)
-                        st.info("Using PaddleOCR as primary engine")
-                    except Exception as e:
-                        st.warning(f"Could not initialize PaddleOCR: {str(e)}")
-                        use_paddle = False
-            
-            # Initialize EasyOCR if PaddleOCR failed or we're skipping it
-            if use_easyocr and (not use_paddle or not paddle_ocr):
-                try:
-                    import easyocr
-                    easyocr_reader = easyocr.Reader(['en'], gpu=False)
-                    st.info("Using EasyOCR" + (" as fallback" if use_paddle else " as primary engine"))
-                except Exception as e:
-                    st.warning(f"Could not initialize EasyOCR: {str(e)}")
-                    use_easyocr = False
-                
-            # Initialize Keras-OCR as final fallback
-            if use_keras and (not use_paddle or not paddle_ocr) and (not use_easyocr or not easyocr_reader):
-                try:
-                    import keras_ocr
-                    keras_pipeline = keras_ocr.pipeline.Pipeline()
-                    st.info("Using Keras-OCR" + (" as fallback" if (use_paddle or use_easyocr) else " as primary engine"))
-                except Exception as e:
-                    st.warning(f"Could not initialize Keras-OCR: {str(e)}")
-                    use_keras = False
-            
-            # Process each page
-            for page_num in range(total_pages):
-                try:
-                    # Get page and convert to image
-                    page = pdf_document[page_num]
-                    pix = page.get_pixmap(alpha=False, dpi=resolution)
-                    
-                    # Convert to numpy array with proper shape
-                    img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
-                        pix.height, pix.width, 3 if pix.n >= 3 else 1
-                    )
-                    
-                    # Ensure 3 channels
-                    if img_array.shape[-1] == 1:
-                        img_array = np.repeat(img_array, 3, axis=-1)
-                    
-                    # Create a temporary image file for PaddleOCR if needed
-                    tmp_img_path = None
-                    if paddle_ocr:
-                        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_img:
-                            tmp_img_path = tmp_img.name
-                            # Save the numpy array as an image
-                            import cv2
-                            cv2.imwrite(tmp_img_path, img_array)
-                    
-                    # Process with PaddleOCR if available
-                    if paddle_ocr and tmp_img_path:
-                        try:
-                            # Process with PaddleOCR
-                            result = paddle_ocr.ocr(tmp_img_path, cls=True)
-                            
-                            # Extract text from PaddleOCR results
-                            page_text = []
-                            for line in result:
-                                for item in line:
-                                    # PaddleOCR result format: [[[x1,y1],[x2,y2],[x3,y3],[x4,y4]], [text, confidence]]
-                                    page_text.append(item[1][0])  # Extract text
-                            
-                            all_results.extend(page_text)
-                            st.info(f"Successfully processed page {page_num+1} with PaddleOCR")
-                            # Delete temp file and continue to next page
-                            if os.path.exists(tmp_img_path):
-                                os.unlink(tmp_img_path)
-                            continue
-                        except Exception as paddle_error:
-                            st.warning(f"PaddleOCR failed on page {page_num+1}: {str(paddle_error)}")
-                            # Clean up temp file if it exists
-                            if tmp_img_path and os.path.exists(tmp_img_path):
-                                os.unlink(tmp_img_path)
-                    
-                    # Process with EasyOCR if available and PaddleOCR failed or wasn't available
-                    if easyocr_reader:
-                        try:
-                            results = easyocr_reader.readtext(img_array)
-                            page_text = [result[1] for result in results]  # Extract text
-                            all_results.extend(page_text)
-                            st.info(f"Successfully processed page {page_num+1} with EasyOCR")
-                            continue
-                        except Exception as easyocr_error:
-                            st.warning(f"EasyOCR failed on page {page_num+1}: {str(easyocr_error)}")
-                    
-                    # Process with Keras-OCR as last resort
-                    if keras_pipeline:
-                        try:
-                            predictions = keras_pipeline.recognize([img_array])[0]
-                            keras_text = [text for text, _ in predictions]
-                            all_results.extend(keras_text)
-                            st.info(f"Successfully processed page {page_num+1} with Keras-OCR")
-                            continue
-                        except Exception as keras_error:
-                            st.error(f"Keras-OCR failed on page {page_num+1}: {str(keras_error)}")
-                    
-                    # If we got here, all engines failed
-                    st.error(f"All OCR engines failed on page {page_num+1}")
-                    
-                    # Clear memory
-                    del img_array
-                    del pix
-                    gc.collect()
+                        # Use an alternative approach with pdfplumber
+                        with pdfplumber.open(pdf_path) as plumb_pdf:
+                            if page_num < len(plumb_pdf.pages):
+                                plumb_page = plumb_pdf.pages[page_num]
+                                img = plumb_page.to_image(resolution=150)
+                                img_array = np.array(img.original)
+                                
+                                # Process with EasyOCR
+                                results = reader.readtext(img_array)
+                                page_text = [result[1] for result in results]
+                                all_results.extend(page_text)
+                    except Exception as render_error:
+                        st.warning(f"Error rendering page {page_num + 1}: {str(render_error)}")
+                        continue
                 
                 except Exception as page_error:
                     st.warning(f"Error processing page {page_num + 1}: {str(page_error)}")
                     continue
                 
+                # Update progress
                 progress_bar.progress((page_num + 1) / total_pages)
                 gc.collect()  # Force garbage collection after each page
             
-        finally:
-            # Clean up resources
-            if paddle_ocr:
-                del paddle_ocr
-                # Clean up PaddleOCR modules
-                try:
-                    import sys
-                    modules_to_remove = [m for m in sys.modules if m.startswith('paddle') or m.startswith('paddleocr')]
-                    for module in modules_to_remove:
-                        if module in sys.modules:
-                            del sys.modules[module]
-                except:
-                    pass
-            
-            # Close PDF and clean up
-            pdf_document.close()
+            # Clear progress bar
             progress_bar.empty()
-            gc.collect()
         
         if all_results:
             return "\n".join(all_results)
@@ -328,21 +228,21 @@ def extract_text_from_scanned_pdf(pdf_path):
     except Exception as e:
         st.error(f"OCR processing error: {str(e)}")
         return None
+
         
-# 6. Update is_scanned_pdf function to show dynamic OCR engine message
 def is_scanned_pdf(pdf_path):
-    """Check if PDF is scanned by attempting to extract text using available libraries"""
+    """Check if PDF is scanned by attempting to extract text"""
     try:
         text = extract_text_pdf(pdf_path)
         
         # If the extracted text is very small, it's likely a scanned PDF
         if len(text.strip()) < 100:
-            # Check available OCR engines
-            ocr_engine = "available OCR engine"
-            if st.session_state.get('easyocr_available', False):
-                ocr_engine = "EasyOCR"
+            # Customize message based on available engines
+            engine_msg = "available OCR engine"
+            if hasattr(st.session_state, 'easyocr_available') and st.session_state.easyocr_available:
+                engine_msg = "EasyOCR"
             
-            st.info(f"Detected a scanned PDF. Processing with {ocr_engine}...")
+            st.info(f"Detected a scanned PDF. Processing with {engine_msg}...")
             return True
         return False
     except Exception as e:
@@ -926,30 +826,20 @@ def modify_history_tab():
         return None
 
 def display_pdf(pdf_data):
-    """Display PDF as images while maintaining PDF download capability"""
+    """Display PDF using built-in Streamlit capabilities and provide download option"""
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_pdf:
-            tmp_pdf.write(pdf_data)
-            pdf_path = tmp_pdf.name
-
-        # images = convert_from_path(pdf_path, dpi=200)
-        
-        # for i, image in enumerate(images):
-        #     img_byte_arr = io.BytesIO()
-        #     image.save(img_byte_arr, format='JPEG', quality=95)
-        #     img_byte_arr = img_byte_arr.getvalue()
-
-        #     st.image(img_byte_arr, caption=f'Page {i+1}', use_container_width=True)
-        
-
+        # Use Streamlit's built-in PDF display
         st.download_button(
             label="📥 Download PDF",
             data=pdf_data,
             file_name="document.pdf",
             mime="application/pdf"
         )
-
-        os.unlink(pdf_path)
+        
+        # Display PDF using Streamlit's PDF display capability
+        base64_pdf = base64.b64encode(pdf_data).decode('utf-8')
+        pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="600" type="application/pdf"></iframe>'
+        st.markdown(pdf_display, unsafe_allow_html=True)
         
     except Exception as e:
         st.error(f"Error displaying PDF: {str(e)}")
@@ -959,7 +849,32 @@ def display_pdf(pdf_data):
             file_name="document.pdf",
             mime="application/pdf"
         )
-
+def setup_ocr_environment():
+    """Set up OCR environment and detect available engines"""
+    # Initialize flags in session state
+    if 'ocr_setup_complete' not in st.session_state:
+        st.session_state.ocr_setup_complete = False
+        st.session_state.easyocr_available = False
+    
+    # Skip if already set up
+    if st.session_state.ocr_setup_complete:
+        return
+    
+    # Check for EasyOCR
+    try:
+        import easyocr
+        st.session_state.easyocr_available = True
+    except ImportError:
+        st.session_state.easyocr_available = False
+    
+    # Set up complete
+    st.session_state.ocr_setup_complete = True
+    
+    # Display appropriate message
+    if st.session_state.easyocr_available:
+        st.info("EasyOCR is available for processing scanned PDFs.")
+    else:
+        st.warning("No OCR engines detected - scanned PDF processing may not work.")
 def generate_share_link(file_path, expiry_days=7):
     """Generate a shareable link for a file"""
     try:
@@ -1906,8 +1821,6 @@ def extract_text_pdf(pdf_path):
     """Extract text from machine-readable PDF using available libraries"""
     try:
         # First try using pdfplumber (usually works well for most PDFs)
-        import pdfplumber
-        
         with pdfplumber.open(pdf_path) as pdf:
             text = ""
             for page in pdf.pages:
@@ -1918,8 +1831,6 @@ def extract_text_pdf(pdf_path):
                 return text
         
         # If pdfplumber didn't get enough text, try PyPDF2
-        import PyPDF2
-        
         with open(pdf_path, 'rb') as file:
             pdf_reader = PyPDF2.PdfReader(file)
             text = ""
@@ -2151,6 +2062,7 @@ if 'ocr_checked' not in st.session_state:
             st.warning("No OCR engines available. Text extraction from scanned PDFs may not work.")
 
 def main_app():
+    setup_ocr_environment()
     st.title("🗂️ ASN Project - Data Extraction - AKI Company")
     
     if st.session_state.username == 'admin@akigroup.com':
