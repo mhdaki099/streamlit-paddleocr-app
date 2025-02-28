@@ -52,7 +52,7 @@ except ImportError:
 except Exception as e:
     st.error(f"Error initializing Groq client: {str(e)}")
     groq_client = None
-    
+
 # 2. Add install_and_init_paddle_ocr function
 def install_and_init_paddle_ocr():
     """Dynamically install and initialize PaddleOCR when needed"""
@@ -145,22 +145,22 @@ def init_keras_ocr():
         st.error(f"Error initializing Keras-OCR: {str(e)}")
         return None
 
-# 5. Update extract_text_from_scanned_pdf function to use PaddleOCR on-demand
 def extract_text_from_scanned_pdf(pdf_path):
-    """Extract text from scanned PDF using on-demand PaddleOCR with EasyOCR and Keras-OCR fallbacks"""
+    """Extract text from scanned PDF using available OCR engines"""
     try:
+        # Determine which OCR engines to use based on availability
+        use_paddle = st.session_state.get('paddle_available', False)
+        use_easyocr = st.session_state.get('easyocr_available', False)
+        use_keras = st.session_state.get('keras_ocr_available', False)
+        
+        if not use_easyocr and not use_paddle and not use_keras:
+            st.error("No OCR engines available. Please install at least one of: EasyOCR, PaddleOCR, or Keras-OCR.")
+            return None
+
         # Initialize variables
         paddle_ocr = None
         easyocr_reader = None
-        use_paddle = True  # Flag to control whether to try PaddleOCR
-        
-        # Check Streamlit environment
-        is_streamlit_cloud = os.environ.get("STREAMLIT_SHARING_MODE") == "streamlit"
-        
-        # Don't attempt PaddleOCR on Streamlit Cloud 
-        if is_streamlit_cloud:
-            st.warning("Running on Streamlit Cloud - PaddleOCR is disabled, using EasyOCR directly.")
-            use_paddle = False
+        keras_pipeline = None
         
         # Open PDF with PyMuPDF
         pdf_document = fitz.open(pdf_path)
@@ -174,18 +174,37 @@ def extract_text_from_scanned_pdf(pdf_path):
         resolution = 150  # Lower resolution = less memory but might affect accuracy
         
         try:
-            # Only initialize PaddleOCR if we're going to use it
+            # Initialize OCR engines
             if use_paddle:
-                with st.spinner("Initializing PaddleOCR (only for this session)..."):
-                    paddle_ocr = install_and_init_paddle_ocr()
+                # Only try to import PaddleOCR if we're not on Streamlit Cloud
+                if not is_streamlit_cloud():
+                    try:
+                        from paddleocr import PaddleOCR
+                        paddle_ocr = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False, show_log=False)
+                        st.info("Using PaddleOCR as primary engine")
+                    except Exception as e:
+                        st.warning(f"Could not initialize PaddleOCR: {str(e)}")
+                        use_paddle = False
             
             # Initialize EasyOCR if PaddleOCR failed or we're skipping it
-            if paddle_ocr is None:
-                with st.spinner("Initializing EasyOCR..."):
-                    easyocr_reader = init_ocr()
-                if easyocr_reader is None:
-                    st.error("Failed to initialize OCR engines")
-                    return None
+            if use_easyocr and (not use_paddle or not paddle_ocr):
+                try:
+                    import easyocr
+                    easyocr_reader = easyocr.Reader(['en'], gpu=False)
+                    st.info("Using EasyOCR" + (" as fallback" if use_paddle else " as primary engine"))
+                except Exception as e:
+                    st.warning(f"Could not initialize EasyOCR: {str(e)}")
+                    use_easyocr = False
+                
+            # Initialize Keras-OCR as final fallback
+            if use_keras and (not use_paddle or not paddle_ocr) and (not use_easyocr or not easyocr_reader):
+                try:
+                    import keras_ocr
+                    keras_pipeline = keras_ocr.pipeline.Pipeline()
+                    st.info("Using Keras-OCR" + (" as fallback" if (use_paddle or use_easyocr) else " as primary engine"))
+                except Exception as e:
+                    st.warning(f"Could not initialize Keras-OCR: {str(e)}")
+                    use_keras = False
             
             # Process each page
             for page_num in range(total_pages):
@@ -203,7 +222,7 @@ def extract_text_from_scanned_pdf(pdf_path):
                     if img_array.shape[-1] == 1:
                         img_array = np.repeat(img_array, 3, axis=-1)
                     
-                    # Create a temporary image file for PaddleOCR
+                    # Create a temporary image file for PaddleOCR if needed
                     tmp_img_path = None
                     if paddle_ocr:
                         with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_img:
@@ -212,128 +231,57 @@ def extract_text_from_scanned_pdf(pdf_path):
                             import cv2
                             cv2.imwrite(tmp_img_path, img_array)
                     
-                    # Process smaller chunks if the image is large
-                    height, width = img_array.shape[:2]
-                    if height * width > 4000000:  # If image is very large (>4MP)
-                        st.info(f"Page {page_num+1} is large, processing in chunks to optimize memory usage")
-                        
-                        # Try with PaddleOCR first if available
-                        if paddle_ocr and tmp_img_path:
-                            try:
-                                # Process with PaddleOCR
-                                result = paddle_ocr.ocr(tmp_img_path, cls=True)
-                                
-                                # Extract text from PaddleOCR results
-                                page_text = []
-                                for line in result:
-                                    for item in line:
-                                        # PaddleOCR result format: [[[x1,y1],[x2,y2],[x3,y3],[x4,y4]], [text, confidence]]
-                                        page_text.append(item[1][0])  # Extract text
-                                
-                                all_results.extend(page_text)
-                                st.info(f"Successfully processed page {page_num+1} with PaddleOCR")
-                                continue  # Skip to next page if successful
-                            except Exception as paddle_error:
-                                st.warning(f"PaddleOCR failed on page {page_num+1}, trying EasyOCR: {str(paddle_error)}")
-                        
-                        # Try with EasyOCR as fallback
+                    # Process with PaddleOCR if available
+                    if paddle_ocr and tmp_img_path:
                         try:
-                            if easyocr_reader is None:
-                                easyocr_reader = init_ocr()
+                            # Process with PaddleOCR
+                            result = paddle_ocr.ocr(tmp_img_path, cls=True)
                             
-                            if easyocr_reader:
-                                # Process top half
-                                mid = height // 2
-                                results_top = easyocr_reader.readtext(img_array[:mid, :, :])
-                                # Process bottom half
-                                results_bottom = easyocr_reader.readtext(img_array[mid:, :, :])
-                                
-                                # Extract text from EasyOCR results
-                                page_text = []
-                                for result in results_top + results_bottom:
-                                    # EasyOCR result format: [bbox, text, prob]
-                                    page_text.append(result[1])  # Extract text (index 1)
-                                    
-                                all_results.extend(page_text)
-                                st.info(f"Successfully processed page {page_num+1} with EasyOCR")
-                                continue  # Skip to next page if successful
-                            else:
-                                raise Exception("EasyOCR not initialized")
-                        except Exception as easyocr_error:
-                            st.warning(f"EasyOCR failed on page {page_num+1}, trying Keras-OCR: {str(easyocr_error)}")
+                            # Extract text from PaddleOCR results
+                            page_text = []
+                            for line in result:
+                                for item in line:
+                                    # PaddleOCR result format: [[[x1,y1],[x2,y2],[x3,y3],[x4,y4]], [text, confidence]]
+                                    page_text.append(item[1][0])  # Extract text
                             
-                        # Try with Keras-OCR as second fallback
-                        try:
-                            keras_pipeline = init_keras_ocr()
-                            if keras_pipeline:
-                                # Process with Keras-OCR
-                                predictions_top = keras_pipeline.recognize([img_array[:mid, :, :]])[0]
-                                predictions_bottom = keras_pipeline.recognize([img_array[mid:, :, :]])[0]
-                                
-                                # Extract text from Keras-OCR results
-                                keras_text = []
-                                for text, _ in predictions_top + predictions_bottom:
-                                    keras_text.append(text)
-                                
-                                all_results.extend(keras_text)
-                                st.info(f"Successfully processed page {page_num+1} with Keras-OCR")
-                            else:
-                                st.error(f"All OCR engines failed on page {page_num+1}")
-                        except Exception as keras_error:
-                            st.error(f"All OCR engines failed on page {page_num+1}: {str(keras_error)}")
-                    else:
-                        # Process full page with PaddleOCR first if available
-                        if paddle_ocr and tmp_img_path:
-                            try:
-                                # Process with PaddleOCR
-                                result = paddle_ocr.ocr(tmp_img_path, cls=True)
-                                
-                                # Extract text from PaddleOCR results
-                                page_text = []
-                                for line in result:
-                                    for item in line:
-                                        page_text.append(item[1][0])  # Extract text
-                                
-                                all_results.extend(page_text)
-                                st.info(f"Successfully processed page {page_num+1} with PaddleOCR")
-                                continue  # Skip to next page if successful
-                            except Exception as paddle_error:
-                                st.warning(f"PaddleOCR failed on page {page_num+1}, trying EasyOCR: {str(paddle_error)}")
-                        
-                        # Try with EasyOCR as fallback
-                        try:
-                            if easyocr_reader is None:
-                                easyocr_reader = init_ocr()
-                                
-                            if easyocr_reader:
-                                results = easyocr_reader.readtext(img_array)
-                                page_text = [result[1] for result in results]  # Extract text
-                                all_results.extend(page_text)
-                                st.info(f"Successfully processed page {page_num+1} with EasyOCR")
-                                continue  # Skip to next page if successful
-                            else:
-                                raise Exception("EasyOCR not initialized")
-                        except Exception as easyocr_error:
-                            st.warning(f"EasyOCR failed on page {page_num+1}, trying Keras-OCR: {str(easyocr_error)}")
-                            
-                        # Try with Keras-OCR as second fallback
-                        try:
-                            keras_pipeline = init_keras_ocr()
-                            if keras_pipeline:
-                                predictions = keras_pipeline.recognize([img_array])[0]
-                                keras_text = [text for text, _ in predictions]
-                                all_results.extend(keras_text)
-                                st.info(f"Successfully processed page {page_num+1} with Keras-OCR")
-                            else:
-                                st.error(f"All OCR engines failed on page {page_num+1}")
-                        except Exception as keras_error:
-                            st.error(f"All OCR engines failed on page {page_num+1}: {str(keras_error)}")
+                            all_results.extend(page_text)
+                            st.info(f"Successfully processed page {page_num+1} with PaddleOCR")
+                            # Delete temp file and continue to next page
+                            if os.path.exists(tmp_img_path):
+                                os.unlink(tmp_img_path)
+                            continue
+                        except Exception as paddle_error:
+                            st.warning(f"PaddleOCR failed on page {page_num+1}: {str(paddle_error)}")
+                            # Clean up temp file if it exists
+                            if tmp_img_path and os.path.exists(tmp_img_path):
+                                os.unlink(tmp_img_path)
                     
-                    # Delete the temporary image file
-                    if tmp_img_path and os.path.exists(tmp_img_path):
-                        os.unlink(tmp_img_path)
+                    # Process with EasyOCR if available and PaddleOCR failed or wasn't available
+                    if easyocr_reader:
+                        try:
+                            results = easyocr_reader.readtext(img_array)
+                            page_text = [result[1] for result in results]  # Extract text
+                            all_results.extend(page_text)
+                            st.info(f"Successfully processed page {page_num+1} with EasyOCR")
+                            continue
+                        except Exception as easyocr_error:
+                            st.warning(f"EasyOCR failed on page {page_num+1}: {str(easyocr_error)}")
                     
-                    # Clear image from memory
+                    # Process with Keras-OCR as last resort
+                    if keras_pipeline:
+                        try:
+                            predictions = keras_pipeline.recognize([img_array])[0]
+                            keras_text = [text for text, _ in predictions]
+                            all_results.extend(keras_text)
+                            st.info(f"Successfully processed page {page_num+1} with Keras-OCR")
+                            continue
+                        except Exception as keras_error:
+                            st.error(f"Keras-OCR failed on page {page_num+1}: {str(keras_error)}")
+                    
+                    # If we got here, all engines failed
+                    st.error(f"All OCR engines failed on page {page_num+1}")
+                    
+                    # Clear memory
                     del img_array
                     del pix
                     gc.collect()
@@ -346,11 +294,18 @@ def extract_text_from_scanned_pdf(pdf_path):
                 gc.collect()  # Force garbage collection after each page
             
         finally:
-            # Clean up PaddleOCR resources if used
+            # Clean up resources
             if paddle_ocr:
-                st.info("Cleaning up PaddleOCR resources...")
                 del paddle_ocr
-                cleanup_paddle_ocr()
+                # Clean up PaddleOCR modules
+                try:
+                    import sys
+                    modules_to_remove = [m for m in sys.modules if m.startswith('paddle') or m.startswith('paddleocr')]
+                    for module in modules_to_remove:
+                        if module in sys.modules:
+                            del sys.modules[module]
+                except:
+                    pass
             
             # Close PDF and clean up
             pdf_document.close()
@@ -366,7 +321,7 @@ def extract_text_from_scanned_pdf(pdf_path):
     except Exception as e:
         st.error(f"OCR processing error: {str(e)}")
         return None
-
+        
 # 6. Update is_scanned_pdf function to show dynamic OCR engine message
 def is_scanned_pdf(pdf_path):
     """Check if PDF is scanned by attempting to extract text"""
@@ -2111,6 +2066,70 @@ def standardize_headers(headers):
             standardized.append(header)
 
     return standard_headers  # Return the standardized list in correct order
+
+
+def is_streamlit_cloud():
+    """Detect if the app is running on Streamlit Cloud"""
+    return "STREAMLIT_SHARING_MODE" in os.environ or "STREAMLIT_RUN_PATH" in os.environ
+
+
+def check_ocr_availability():
+    """Check which OCR engines are available and set flags"""
+    # Initialize flags
+    paddle_available = False
+    easyocr_available = False
+    keras_ocr_available = False
+    
+    # Check for EasyOCR
+    try:
+        import easyocr
+        easyocr_available = True
+        st.session_state.easyocr_available = True
+    except ImportError:
+        st.session_state.easyocr_available = False
+    
+    # Check for PaddleOCR (skip on Streamlit Cloud)
+    if not is_streamlit_cloud():
+        try:
+            from paddleocr import PaddleOCR
+            paddle_available = True
+            st.session_state.paddle_available = True
+        except ImportError:
+            st.session_state.paddle_available = False
+    else:
+        st.session_state.paddle_available = False
+    
+    # Check for Keras-OCR
+    try:
+        import keras_ocr
+        keras_ocr_available = True
+        st.session_state.keras_ocr_available = True
+    except ImportError:
+        st.session_state.keras_ocr_available = False
+    
+    # Return availability summary
+    return {
+        "paddle": paddle_available,
+        "easyocr": easyocr_available,
+        "keras_ocr": keras_ocr_available
+    }
+
+# Run availability check at startup
+if 'ocr_checked' not in st.session_state:
+    st.session_state.ocr_checked = True
+    available_engines = check_ocr_availability()
+    
+    # Display info about available OCR engines
+    if is_streamlit_cloud():
+        st.info("Running on Streamlit Cloud with EasyOCR" + 
+                (" and Keras-OCR" if st.session_state.keras_ocr_available else ""))
+    else:
+        engines_str = ", ".join([engine for engine, available in available_engines.items() if available])
+        if engines_str:
+            st.info(f"Available OCR engines: {engines_str}")
+        else:
+            st.warning("No OCR engines available. Text extraction from scanned PDFs may not work.")
+
 def main_app():
     st.title("🗂️ ASN Project - Data Extraction - AKI Company")
     
