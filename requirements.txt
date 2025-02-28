@@ -20,9 +20,10 @@ shapely
 pyclipper
 scikit-image
 imgaug
-lmdb
+
 tqdm>=4.65.0  # Changed from tqdm74 which doesn't exist
 
 # Additional dependencies
 tensorflow>=2.10.0
 importlib-metadata>=6.0.0
+lmdb==1.6.1  # Explicitly specify compatible version
