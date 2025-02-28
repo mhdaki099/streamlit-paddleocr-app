@@ -1,6 +1,6 @@
 # OCR Libraries
 easyocr==1.7.2
-tensorflow==2.15.0
+tensorflow==2.17.0
 
 # API and LLM
 groq==0.3.1
